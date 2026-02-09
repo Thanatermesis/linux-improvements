@@ -649,7 +649,7 @@ static void submit_logged_buffer(struct buffer_head *bh)
 		BUG();
 	if (!buffer_uptodate(bh))
 		BUG();
-	submit_bh(REQ_OP_WRITE, bh);
+	submit_bh(REQ_OP_WRITE | REQ_SYNC, bh);
 }
 
 static void submit_ordered_buffer(struct buffer_head *bh)
@@ -659,7 +659,7 @@ static void submit_ordered_buffer(struct buffer_head *bh)
 	clear_buffer_dirty(bh);
 	if (!buffer_uptodate(bh))
 		BUG();
-	submit_bh(REQ_OP_WRITE, bh);
+	submit_bh(REQ_OP_WRITE | REQ_SYNC, bh);
 }
 
 #define CHUNK_SIZE 32
@@ -2386,8 +2386,8 @@ static int journal_read(struct super_block *sb)
 
 	cur_dblock = SB_ONDISK_JOURNAL_1st_BLOCK(sb);
 	reiserfs_info(sb, "checking transaction log (%pg)\n",
-		      file_bdev(journal->j_bdev_file));
-	start = ktime_get_seconds();
+		      journal->j_dev);
+	start = ktime_get_real_seconds();
 
 	/*
 	 * step 1, read in the journal header block.  Check the transaction
@@ -2547,8 +2547,8 @@ start_log_replay:
 	journal->j_first_unflushed_offset = journal->j_start;
 	if (replay_count > 0) {
 		reiserfs_info(sb,
-			      "replayed %d transactions in %lu seconds\n",
-			      replay_count, ktime_get_seconds() - start);
+			      "replayed %d transactions in %llu seconds\n",
+			      replay_count, (unsigned long long)ktime_get_real_seconds() - start);
 	}
 	/* needed to satisfy the locking in _update_journal_header_block */
 	reiserfs_write_lock(sb);
@@ -2581,6 +2581,7 @@ static struct reiserfs_journal_list *alloc_journal_list(struct super_block *s)
 	return jl;
 }
 
+
 static void journal_list_init(struct super_block *sb)
 {
 	SB_JOURNAL(sb)->j_current_jl = alloc_journal_list(sb);
@@ -2594,11 +2595,15 @@ static void release_journal_dev(struct reiserfs_journal *journal)
 	}
 }
 
+static const struct fs_holder_operations reiserfs_fs_holder_ops = {
+	.owner = "REISERFS",
+};
+
 static int journal_init_dev(struct super_block *super,
 			    struct reiserfs_journal *journal,
 			    const char *jdev_name)
 {
-	blk_mode_t blkdev_mode = BLK_OPEN_READ;
+	blk_mode_t blkdev_mode = BLK_OPEN_READ | BLK_OPEN_RESTRICT_WRITES;
 	void *holder = journal;
 	int result;
 	dev_t jdev;
@@ -2617,7 +2622,7 @@ static int journal_init_dev(struct super_block *super,
 		if (jdev == super->s_dev)
 			holder = NULL;
 		journal->j_bdev_file = bdev_file_open_by_dev(jdev, blkdev_mode,
-							  holder, NULL);
+							  holder, &reiserfs_fs_holder_ops);
 		if (IS_ERR(journal->j_bdev_file)) {
 			result = PTR_ERR(journal->j_bdev_file);
 			journal->j_bdev_file = NULL;
@@ -2632,7 +2637,7 @@ static int journal_init_dev(struct super_block *super,
 	}
 
 	journal->j_bdev_file = bdev_file_open_by_path(jdev_name, blkdev_mode,
-						   holder, NULL);
+						   holder, &reiserfs_fs_holder_ops);
 	if (IS_ERR(journal->j_bdev_file)) {
 		result = PTR_ERR(journal->j_bdev_file);
 		journal->j_bdev_file = NULL;
@@ -2645,7 +2650,7 @@ static int journal_init_dev(struct super_block *super,
 	set_blocksize(journal->j_bdev_file, super->s_blocksize);
 	reiserfs_info(super,
 		      "journal_init_dev: journal device: %pg\n",
-		      file_bdev(journal->j_bdev_file));
+		      journal->j_dev);
 	return 0;
 }
 
@@ -3564,7 +3569,7 @@ void reiserfs_flush_old_commits(struct super_block *sb)
 	struct reiserfs_transaction_handle th;
 	struct reiserfs_journal *journal = SB_JOURNAL(sb);
 
-	now = ktime_get_seconds();
+	now = ktime_get_real_seconds();
 	/*
 	 * safety check so we don't flush while we are replaying the log during
 	 * mount
@@ -3695,7 +3700,7 @@ static int check_journal_end(struct reiserfs_transaction_handle *th, int flags)
 	}
 
 	/* deal with old transactions where we are the last writers */
-	now = ktime_get_seconds();
+	now = ktime_get_real_seconds();
 	if ((now - journal->j_trans_start_time) > journal->j_max_trans_age) {
 		commit_now = 1;
 		journal->j_next_async_flush = 1;
@@ -4207,12 +4212,12 @@ static int do_journal_end(struct reiserfs_transaction_handle *th, int flags)
 					     jindex) %
 					    SB_ONDISK_JOURNAL_SIZE(sb)));
 			set_buffer_uptodate(tmp_bh);
-			page = cn->bh->b_page;
-			addr = kmap(page);
+			struct folio *folio = cn->bh->b_folio;
+			addr = kmap_local_folio(folio, 0);
 			memcpy(tmp_bh->b_data,
-			       addr + offset_in_page(cn->bh->b_data),
+			       addr + offset_in_folio(folio, bh_offset(cn->bh)),
 			       cn->bh->b_size);
-			kunmap(page);
+			kunmap_local(addr);
 			mark_buffer_dirty(tmp_bh);
 			jindex++;
 			set_buffer_journal_dirty(cn->bh);

@@ -24,7 +24,7 @@
  *
  */
 
-static int show_version(struct seq_file *m, void *unused)
+static int show_version(struct seq_file *m, const void *unused)
 {
 	struct super_block *sb = m->private;
 	char *format;
@@ -67,7 +67,7 @@ static int show_version(struct seq_file *m, void *unused)
 #define DJP( x ) le32_to_cpu( jp -> x )
 #define JF( x ) ( r -> s_journal -> x )
 
-static int show_super(struct seq_file *m, void *unused)
+static int show_super(struct seq_file *m, const void *unused)
 {
 	struct super_block *sb = m->private;
 	struct reiserfs_sb_info *r = REISERFS_SB(sb);
@@ -130,7 +130,7 @@ static int show_super(struct seq_file *m, void *unused)
 	return 0;
 }
 
-static int show_per_level(struct seq_file *m, void *unused)
+static int show_per_level(struct seq_file *m, const void *unused)
 {
 	struct super_block *sb = m->private;
 	struct reiserfs_sb_info *r = REISERFS_SB(sb);
@@ -189,7 +189,7 @@ static int show_per_level(struct seq_file *m, void *unused)
 	return 0;
 }
 
-static int show_bitmap(struct seq_file *m, void *unused)
+static int show_bitmap(struct seq_file *m, const void *unused)
 {
 	struct super_block *sb = m->private;
 	struct reiserfs_sb_info *r = REISERFS_SB(sb);
@@ -222,7 +222,7 @@ static int show_bitmap(struct seq_file *m, void *unused)
 	return 0;
 }
 
-static int show_on_disk_super(struct seq_file *m, void *unused)
+static int show_on_disk_super(struct seq_file *m, const void *unused)
 {
 	struct super_block *sb = m->private;
 	struct reiserfs_sb_info *sb_info = REISERFS_SB(sb);
@@ -266,7 +266,7 @@ static int show_on_disk_super(struct seq_file *m, void *unused)
 	return 0;
 }
 
-static int show_oidmap(struct seq_file *m, void *unused)
+static int show_oidmap(struct seq_file *m, const void *unused)
 {
 	struct super_block *sb = m->private;
 	struct reiserfs_sb_info *sb_info = REISERFS_SB(sb);
@@ -297,14 +297,12 @@ static int show_oidmap(struct seq_file *m, void *unused)
 	return 0;
 }
 
-static time64_t ktime_mono_to_real_seconds(time64_t mono)
+static time64_t ktime_mono_to_real_seconds(ktime_t monotonic_time)
 {
-	ktime_t kt = ktime_set(mono, NSEC_PER_SEC/2);
-
-	return ktime_divns(ktime_mono_to_real(kt), NSEC_PER_SEC);
+	return ktime_divns(ktime_mono_to_real(monotonic_time), NSEC_PER_SEC);
 }
 
-static int show_journal(struct seq_file *m, void *unused)
+static int show_journal(struct seq_file *m, const void *unused)
 {
 	struct super_block *sb = m->private;
 	struct reiserfs_sb_info *r = REISERFS_SB(sb);
@@ -313,7 +311,7 @@ static int show_journal(struct seq_file *m, void *unused)
 
 	seq_printf(m,		/* on-disk fields */
 		   "jp_journal_1st_block: \t%i\n"
-		   "jp_journal_dev: \t%pg[%x]\n"
+		   "jp_journal_dev: \t%pg\n"
 		   "jp_journal_size: \t%i\n"
 		   "jp_journal_trans_max: \t%i\n"
 		   "jp_journal_magic: \t%i\n"
@@ -354,7 +352,7 @@ static int show_journal(struct seq_file *m, void *unused)
 		   "prepare: \t%12lu\n"
 		   "prepare_retry: \t%12lu\n",
 		   DJP(jp_journal_1st_block),
-		   file_bdev(SB_JOURNAL(sb)->j_bdev_file),
+		   SB_JOURNAL(sb)->j_dev,
 		   DJP(jp_journal_dev),
 		   DJP(jp_journal_size),
 		   DJP(jp_journal_trans_max),
@@ -418,19 +416,22 @@ int reiserfs_proc_info_init(struct super_block *sb)
 
 	spin_lock_init(&__PINFO(sb).lock);
 	REISERFS_SB(sb)->procdir = proc_mkdir_data(b, 0, proc_info_root, sb);
-	if (REISERFS_SB(sb)->procdir) {
-		add_file(sb, "version", show_version);
-		add_file(sb, "super", show_super);
-		add_file(sb, "per-level", show_per_level);
-		add_file(sb, "bitmap", show_bitmap);
-		add_file(sb, "on-disk-super", show_on_disk_super);
-		add_file(sb, "oidmap", show_oidmap);
-		add_file(sb, "journal", show_journal);
-		return 0;
+	if (IS_ERR(REISERFS_SB(sb)->procdir)) {
+		reiserfs_warning(sb, "cannot create /proc/%s/%s: %ld",
+				 proc_info_root_name, b,
+				 PTR_ERR(REISERFS_SB(sb)->procdir));
+		REISERFS_SB(sb)->procdir = NULL; /* Ensure NULL on error */
+		return 1;
 	}
-	reiserfs_warning(sb, "cannot create /proc/%s/%s",
-			 proc_info_root_name, b);
-	return 1;
+	/* Directory created successfully */
+	add_file(sb, "version", show_version);
+	add_file(sb, "super", show_super);
+	add_file(sb, "per-level", show_per_level);
+	add_file(sb, "bitmap", show_bitmap);
+	add_file(sb, "on-disk-super", show_on_disk_super);
+	add_file(sb, "oidmap", show_oidmap);
+	add_file(sb, "journal", show_journal);
+	return 0;
 }
 
 int reiserfs_proc_info_done(struct super_block *sb)
@@ -456,9 +457,11 @@ int reiserfs_proc_info_global_init(void)
 {
 	if (proc_info_root == NULL) {
 		proc_info_root = proc_mkdir(proc_info_root_name, NULL);
-		if (!proc_info_root) {
-			reiserfs_warning(NULL, "cannot create /proc/%s",
-					 proc_info_root_name);
+		if (IS_ERR(proc_info_root)) {
+			reiserfs_warning(NULL, "cannot create /proc/%s: %ld",
+					 proc_info_root_name,
+					 PTR_ERR(proc_info_root));
+			proc_info_root = NULL; /* Ensure NULL on error */
 			return 1;
 		}
 	}

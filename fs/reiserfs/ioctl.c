@@ -10,9 +10,9 @@
 #include <linux/uaccess.h>
 #include <linux/pagemap.h>
 #include <linux/compat.h>
-#include <linux/fileattr.h>
+#include <linux/file_kattr.h>
 
-int reiserfs_fileattr_get(struct dentry *dentry, struct fileattr *fa)
+int reiserfs_fileattr_get(struct dentry *dentry, struct file_kattr *fa)
 {
 	struct inode *inode = d_inode(dentry);
 
@@ -25,7 +25,7 @@ int reiserfs_fileattr_get(struct dentry *dentry, struct fileattr *fa)
 }
 
 int reiserfs_fileattr_set(struct mnt_idmap *idmap,
-			  struct dentry *dentry, struct fileattr *fa)
+			  struct dentry *dentry, struct file_kattr *fa)
 {
 	struct inode *inode = d_inode(dentry);
 	unsigned int flags = fa->flags;
@@ -147,7 +147,7 @@ long reiserfs_compat_ioctl(struct file *file, unsigned int cmd,
 }
 #endif
 
-int reiserfs_commit_write(struct file *f, struct page *page,
+int reiserfs_commit_write(struct file *f, struct folio *folio,
 			  unsigned from, unsigned to);
 /*
  * reiserfs_unpack
@@ -158,7 +158,7 @@ int reiserfs_unpack(struct inode *inode)
 {
 	int retval = 0;
 	int index;
-	struct page *page;
+	struct folio *folio;
 	struct address_space *mapping;
 	unsigned long write_from;
 	unsigned long blocksize = inode->i_sb->s_blocksize;
@@ -190,29 +190,30 @@ int reiserfs_unpack(struct inode *inode)
 	}
 
 	/*
-	 * we unpack by finding the page with the tail, and calling
-	 * __reiserfs_write_begin on that page.  This will force a
+	 * we unpack by finding the folio with the tail, and calling
+	 * __reiserfs_write_begin on that folio. This will force a
 	 * reiserfs_get_block to unpack the tail for us.
 	 */
 	index = inode->i_size >> PAGE_SHIFT;
 	mapping = inode->i_mapping;
-	page = grab_cache_page(mapping, index);
-	retval = -ENOMEM;
-	if (!page) {
+	folio = filemap_get_folio(mapping, index);
+	retval = PTR_ERR_OR_ZERO(folio);
+	if (IS_ERR(folio)) {
+		folio = NULL;
 		goto out;
 	}
-	retval = __reiserfs_write_begin(page, write_from, 0);
+	retval = __reiserfs_write_begin(folio, write_from, 0);
 	if (retval)
 		goto out_unlock;
 
-	/* conversion can change page contents, must flush */
-	flush_dcache_page(page);
-	retval = reiserfs_commit_write(NULL, page, write_from, write_from);
+	/* conversion can change folio contents, must flush */
+	flush_dcache_folio(folio);
+	retval = reiserfs_commit_write(NULL, folio, write_from, write_from);
 	REISERFS_I(inode)->i_flags |= i_nopack_mask;
 
 out_unlock:
-	unlock_page(page);
-	put_page(page);
+	folio_unlock(folio);
+	folio_put(folio);
 
 out:
 	inode_unlock(inode);

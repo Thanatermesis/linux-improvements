@@ -111,70 +111,70 @@ typedef enum {
  * struct reiserfs_super_block accessors/mutators since this is a disk
  * structure, it will always be in little endian format.
  */
-#define sb_block_count(sbp)         (le32_to_cpu((sbp)->s_v1.s_block_count))
-#define set_sb_block_count(sbp,v)   ((sbp)->s_v1.s_block_count = cpu_to_le32(v))
-#define sb_free_blocks(sbp)         (le32_to_cpu((sbp)->s_v1.s_free_blocks))
-#define set_sb_free_blocks(sbp,v)   ((sbp)->s_v1.s_free_blocks = cpu_to_le32(v))
-#define sb_root_block(sbp)          (le32_to_cpu((sbp)->s_v1.s_root_block))
-#define set_sb_root_block(sbp,v)    ((sbp)->s_v1.s_root_block = cpu_to_le32(v))
+#define sb_block_count(sbp)         (le32_to_cpu(READ_ONCE((sbp)->s_v1.s_block_count)))
+#define set_sb_block_count(sbp,v)   (WRITE_ONCE((sbp)->s_v1.s_block_count, cpu_to_le32(v)))
+#define sb_free_blocks(sbp)         (le32_to_cpu(READ_ONCE((sbp)->s_v1.s_free_blocks)))
+#define set_sb_free_blocks(sbp,v)   (WRITE_ONCE((sbp)->s_v1.s_free_blocks, cpu_to_le32(v)))
+#define sb_root_block(sbp)          (le32_to_cpu(READ_ONCE((sbp)->s_v1.s_root_block)))
+#define set_sb_root_block(sbp,v)    (WRITE_ONCE((sbp)->s_v1.s_root_block, cpu_to_le32(v)))
 
 #define sb_jp_journal_1st_block(sbp)  \
-              (le32_to_cpu((sbp)->s_v1.s_journal.jp_journal_1st_block))
+              (le32_to_cpu(READ_ONCE((sbp)->s_v1.s_journal.jp_journal_1st_block)))
 #define set_sb_jp_journal_1st_block(sbp,v) \
-              ((sbp)->s_v1.s_journal.jp_journal_1st_block = cpu_to_le32(v))
+              (WRITE_ONCE((sbp)->s_v1.s_journal.jp_journal_1st_block, cpu_to_le32(v)))
 #define sb_jp_journal_dev(sbp) \
-              (le32_to_cpu((sbp)->s_v1.s_journal.jp_journal_dev))
+              (le32_to_cpu(READ_ONCE((sbp)->s_v1.s_journal.jp_journal_dev)))
 #define set_sb_jp_journal_dev(sbp,v) \
-              ((sbp)->s_v1.s_journal.jp_journal_dev = cpu_to_le32(v))
+              (WRITE_ONCE((sbp)->s_v1.s_journal.jp_journal_dev, cpu_to_le32(v)))
 #define sb_jp_journal_size(sbp) \
-              (le32_to_cpu((sbp)->s_v1.s_journal.jp_journal_size))
+              (le32_to_cpu(READ_ONCE((sbp)->s_v1.s_journal.jp_journal_size)))
 #define set_sb_jp_journal_size(sbp,v) \
-              ((sbp)->s_v1.s_journal.jp_journal_size = cpu_to_le32(v))
+              (WRITE_ONCE((sbp)->s_v1.s_journal.jp_journal_size, cpu_to_le32(v)))
 #define sb_jp_journal_trans_max(sbp) \
-              (le32_to_cpu((sbp)->s_v1.s_journal.jp_journal_trans_max))
+              (le32_to_cpu(READ_ONCE((sbp)->s_v1.s_journal.jp_journal_trans_max)))
 #define set_sb_jp_journal_trans_max(sbp,v) \
-              ((sbp)->s_v1.s_journal.jp_journal_trans_max = cpu_to_le32(v))
+              (WRITE_ONCE((sbp)->s_v1.s_journal.jp_journal_trans_max, cpu_to_le32(v)))
 #define sb_jp_journal_magic(sbp) \
-              (le32_to_cpu((sbp)->s_v1.s_journal.jp_journal_magic))
+              (le32_to_cpu(READ_ONCE((sbp)->s_v1.s_journal.jp_journal_magic)))
 #define set_sb_jp_journal_magic(sbp,v) \
-              ((sbp)->s_v1.s_journal.jp_journal_magic = cpu_to_le32(v))
+              (WRITE_ONCE((sbp)->s_v1.s_journal.jp_journal_magic, cpu_to_le32(v)))
 #define sb_jp_journal_max_batch(sbp) \
-              (le32_to_cpu((sbp)->s_v1.s_journal.jp_journal_max_batch))
+              (le32_to_cpu(READ_ONCE((sbp)->s_v1.s_journal.jp_journal_max_batch)))
 #define set_sb_jp_journal_max_batch(sbp,v) \
-              ((sbp)->s_v1.s_journal.jp_journal_max_batch = cpu_to_le32(v))
+              (WRITE_ONCE((sbp)->s_v1.s_journal.jp_journal_max_batch, cpu_to_le32(v)))
 #define sb_jp_jourmal_max_commit_age(sbp) \
-              (le32_to_cpu((sbp)->s_v1.s_journal.jp_journal_max_commit_age))
+              (le32_to_cpu(READ_ONCE((sbp)->s_v1.s_journal.jp_journal_max_commit_age)))
 #define set_sb_jp_journal_max_commit_age(sbp,v) \
-              ((sbp)->s_v1.s_journal.jp_journal_max_commit_age = cpu_to_le32(v))
+              (WRITE_ONCE((sbp)->s_v1.s_journal.jp_journal_max_commit_age, cpu_to_le32(v)))
 
-#define sb_blocksize(sbp)          (le16_to_cpu((sbp)->s_v1.s_blocksize))
-#define set_sb_blocksize(sbp,v)    ((sbp)->s_v1.s_blocksize = cpu_to_le16(v))
-#define sb_oid_maxsize(sbp)        (le16_to_cpu((sbp)->s_v1.s_oid_maxsize))
-#define set_sb_oid_maxsize(sbp,v)  ((sbp)->s_v1.s_oid_maxsize = cpu_to_le16(v))
-#define sb_oid_cursize(sbp)        (le16_to_cpu((sbp)->s_v1.s_oid_cursize))
-#define set_sb_oid_cursize(sbp,v)  ((sbp)->s_v1.s_oid_cursize = cpu_to_le16(v))
-#define sb_umount_state(sbp)       (le16_to_cpu((sbp)->s_v1.s_umount_state))
-#define set_sb_umount_state(sbp,v) ((sbp)->s_v1.s_umount_state = cpu_to_le16(v))
-#define sb_fs_state(sbp)           (le16_to_cpu((sbp)->s_v1.s_fs_state))
-#define set_sb_fs_state(sbp,v)     ((sbp)->s_v1.s_fs_state = cpu_to_le16(v))
+#define sb_blocksize(sbp)          (le16_to_cpu(READ_ONCE((sbp)->s_v1.s_blocksize)))
+#define set_sb_blocksize(sbp,v)    (WRITE_ONCE((sbp)->s_v1.s_blocksize, cpu_to_le16(v)))
+#define sb_oid_maxsize(sbp)        (le16_to_cpu(READ_ONCE((sbp)->s_v1.s_oid_maxsize)))
+#define set_sb_oid_maxsize(sbp,v)  (WRITE_ONCE((sbp)->s_v1.s_oid_maxsize, cpu_to_le16(v)))
+#define sb_oid_cursize(sbp)        (le16_to_cpu(READ_ONCE((sbp)->s_v1.s_oid_cursize)))
+#define set_sb_oid_cursize(sbp,v)  (WRITE_ONCE((sbp)->s_v1.s_oid_cursize, cpu_to_le16(v)))
+#define sb_umount_state(sbp)       (le16_to_cpu(READ_ONCE((sbp)->s_v1.s_umount_state)))
+#define set_sb_umount_state(sbp,v) (WRITE_ONCE((sbp)->s_v1.s_umount_state, cpu_to_le16(v)))
+#define sb_fs_state(sbp)           (le16_to_cpu(READ_ONCE((sbp)->s_v1.s_fs_state)))
+#define set_sb_fs_state(sbp,v)     (WRITE_ONCE((sbp)->s_v1.s_fs_state, cpu_to_le16(v)))
 #define sb_hash_function_code(sbp) \
-              (le32_to_cpu((sbp)->s_v1.s_hash_function_code))
+              (le32_to_cpu(READ_ONCE((sbp)->s_v1.s_hash_function_code)))
 #define set_sb_hash_function_code(sbp,v) \
-              ((sbp)->s_v1.s_hash_function_code = cpu_to_le32(v))
-#define sb_tree_height(sbp)        (le16_to_cpu((sbp)->s_v1.s_tree_height))
-#define set_sb_tree_height(sbp,v)  ((sbp)->s_v1.s_tree_height = cpu_to_le16(v))
-#define sb_bmap_nr(sbp)            (le16_to_cpu((sbp)->s_v1.s_bmap_nr))
-#define set_sb_bmap_nr(sbp,v)      ((sbp)->s_v1.s_bmap_nr = cpu_to_le16(v))
-#define sb_version(sbp)            (le16_to_cpu((sbp)->s_v1.s_version))
-#define set_sb_version(sbp,v)      ((sbp)->s_v1.s_version = cpu_to_le16(v))
+              (WRITE_ONCE((sbp)->s_v1.s_hash_function_code, cpu_to_le32(v)))
+#define sb_tree_height(sbp)        (le16_to_cpu(READ_ONCE((sbp)->s_v1.s_tree_height)))
+#define set_sb_tree_height(sbp,v)  (WRITE_ONCE((sbp)->s_v1.s_tree_height, cpu_to_le16(v)))
+#define sb_bmap_nr(sbp)            (le16_to_cpu(READ_ONCE((sbp)->s_v1.s_bmap_nr)))
+#define set_sb_bmap_nr(sbp,v)      (WRITE_ONCE((sbp)->s_v1.s_bmap_nr, cpu_to_le16(v)))
+#define sb_version(sbp)            (le16_to_cpu(READ_ONCE((sbp)->s_v1.s_version)))
+#define set_sb_version(sbp,v)      (WRITE_ONCE((sbp)->s_v1.s_version, cpu_to_le16(v)))
 
-#define sb_mnt_count(sbp)	   (le16_to_cpu((sbp)->s_mnt_count))
-#define set_sb_mnt_count(sbp, v)   ((sbp)->s_mnt_count = cpu_to_le16(v))
+#define sb_mnt_count(sbp)	   (le16_to_cpu(READ_ONCE((sbp)->s_mnt_count)))
+#define set_sb_mnt_count(sbp, v)   (WRITE_ONCE((sbp)->s_mnt_count, cpu_to_le16(v)))
 
 #define sb_reserved_for_journal(sbp) \
-              (le16_to_cpu((sbp)->s_v1.s_reserved_for_journal))
+              (le16_to_cpu(READ_ONCE((sbp)->s_v1.s_reserved_for_journal)))
 #define set_sb_reserved_for_journal(sbp,v) \
-              ((sbp)->s_v1.s_reserved_for_journal = cpu_to_le16(v))
+              (WRITE_ONCE((sbp)->s_v1.s_reserved_for_journal, cpu_to_le16(v)))
 
 /* LOGGING -- */
 
@@ -1030,7 +1030,7 @@ struct reiserfs_super_block {
 	__le32 s_flags;
 
 	unsigned char s_uuid[16];	/* filesystem unique identifier */
-	unsigned char s_label[16];	/* filesystem volume label */
+	unsigned char s_label[16] __nonstring;	/* filesystem volume label */
 	__le16 s_mnt_count;		/* Count of mounts since last fsck */
 	__le16 s_max_mnt_count;		/* Maximum mounts before check */
 	__le32 s_lastcheck;		/* Timestamp of last fsck */
@@ -2915,7 +2915,7 @@ struct reiserfs_transaction_handle *reiserfs_persistent_transaction(struct
 								    int count);
 int reiserfs_end_persistent_transaction(struct reiserfs_transaction_handle *);
 void reiserfs_vfs_truncate_file(struct inode *inode);
-int reiserfs_commit_page(struct inode *inode, struct page *page,
+int reiserfs_commit_page(struct inode *inode, struct folio *folio,
 			 unsigned from, unsigned to);
 void reiserfs_flush_old_commits(struct super_block *);
 int reiserfs_commit_for_inode(struct inode *);
@@ -3029,7 +3029,7 @@ int reiserfs_cut_from_item(struct reiserfs_transaction_handle *th,
 			   struct treepath *path,
 			   struct cpu_key *key,
 			   struct inode *inode,
-			   struct page *page, loff_t new_file_size);
+			   struct folio *folio, loff_t new_file_size);
 
 int reiserfs_delete_item(struct reiserfs_transaction_handle *th,
 			 struct treepath *path,
@@ -3041,7 +3041,7 @@ void reiserfs_delete_solid_item(struct reiserfs_transaction_handle *th,
 int reiserfs_delete_object(struct reiserfs_transaction_handle *th,
 			   struct inode *inode);
 int reiserfs_do_truncate(struct reiserfs_transaction_handle *th,
-			 struct inode *inode, struct page *,
+			 struct inode *inode, struct folio *,
 			 int update_timestamps);
 
 #define i_block_size(inode) ((inode)->i_sb->s_blocksize)
@@ -3086,7 +3086,8 @@ void make_le_item_head(struct item_head *ih, const struct cpu_key *key,
 struct inode *reiserfs_iget(struct super_block *s, const struct cpu_key *key);
 
 struct reiserfs_security_handle;
-int reiserfs_new_inode(struct reiserfs_transaction_handle *th,
+int reiserfs_new_inode(struct mnt_idmap *idmap,
+		       struct reiserfs_transaction_handle *th,
 		       struct inode *dir, umode_t mode,
 		       const char *symname, loff_t i_size,
 		       struct dentry *dentry, struct inode *inode,
@@ -3105,7 +3106,7 @@ void sd_attrs_to_i_attrs(__u16 sd_attrs, struct inode *inode);
 int reiserfs_setattr(struct mnt_idmap *idmap, struct dentry *dentry,
 		     struct iattr *attr);
 
-int __reiserfs_write_begin(struct page *page, unsigned from, unsigned len);
+int __reiserfs_write_begin(struct folio *folio, unsigned from, unsigned len);
 
 /* namei.c */
 void reiserfs_init_priv_inode(struct inode *inode);
@@ -3172,7 +3173,7 @@ int reiserfs_readdir_inode(struct inode *, struct dir_context *);
 int direct2indirect(struct reiserfs_transaction_handle *, struct inode *,
 		    struct treepath *, struct buffer_head *, loff_t);
 int indirect2direct(struct reiserfs_transaction_handle *, struct inode *,
-		    struct page *, struct treepath *, const struct cpu_key *,
+		    struct folio *, struct treepath *, const struct cpu_key *,
 		    loff_t, char *);
 void reiserfs_unmap_buffer(struct buffer_head *);
 
@@ -3410,9 +3411,9 @@ __u32 r5_hash(const signed char *msg, int len);
 #define SPARE_SPACE 500
 
 /* prototypes from ioctl.c */
-int reiserfs_fileattr_get(struct dentry *dentry, struct fileattr *fa);
+int reiserfs_fileattr_get(struct dentry *dentry, struct file_kattr *fa);
 int reiserfs_fileattr_set(struct mnt_idmap *idmap,
-			  struct dentry *dentry, struct fileattr *fa);
+			  struct dentry *dentry, struct file_kattr *fa);
 long reiserfs_ioctl(struct file *filp, unsigned int cmd, unsigned long arg);
 long reiserfs_compat_ioctl(struct file *filp,
 		   unsigned int cmd, unsigned long arg);

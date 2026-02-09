@@ -159,7 +159,7 @@ static int scnprintf_buffer_head(char *buf, size_t size, struct buffer_head *bh)
 			 bh->b_bdev, bh->b_size,
 			 (unsigned long long)bh->b_blocknr,
 			 atomic_read(&(bh->b_count)),
-			 bh->b_state, bh->b_page,
+			 bh->b_state, bh->b_folio,
 			 buffer_uptodate(bh) ? "UPTODATE" : "!UPTODATE",
 			 buffer_dirty(bh) ? "DIRTY" : "CLEAN",
 			 buffer_locked(bh) ? "LOCKED" : "UNLOCKED");

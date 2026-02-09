@@ -24,10 +24,9 @@ int reiserfs_permission(struct mnt_idmap *idmap,
 ssize_t reiserfs_listxattr(struct dentry *dentry, char *buffer, size_t size);
 
 int reiserfs_xattr_get(struct inode *, const char *, void *, size_t);
-int reiserfs_xattr_set(struct inode *, const char *, const void *, size_t, int);
-int reiserfs_xattr_set_handle(struct reiserfs_transaction_handle *,
-			      struct inode *, const char *, const void *,
-			      size_t, int);
+int reiserfs_xattr_set(struct mnt_idmap *, struct inode *, const char *, const void *, size_t, int);
+int reiserfs_xattr_set_handle(struct reiserfs_transaction_handle *, struct mnt_idmap *,
+			      struct inode *, const char *, const void *, size_t, int);
 
 extern const struct xattr_handler reiserfs_xattr_user_handler;
 extern const struct xattr_handler reiserfs_xattr_trusted_handler;

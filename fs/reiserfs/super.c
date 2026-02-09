@@ -30,6 +30,7 @@
 #include <linux/namei.h>
 #include <linux/crc32.h>
 #include <linux/seq_file.h>
+#include <linux/dcache.h> // For bdev_name
 
 struct file_system_type reiserfs_fs_type;
 
@@ -98,7 +99,7 @@ static void flush_old_commits(struct work_struct *work)
 		/* Requeue work if we are not cancelling it */
 		spin_lock(&sbi->old_work_lock);
 		if (sbi->work_queued == 1)
-			queue_delayed_work(system_long_wq, &sbi->old_work, HZ);
+			queue_delayed_work(system_wq, &sbi->old_work, HZ);
 		spin_unlock(&sbi->old_work_lock);
 		return;
 	}
@@ -127,7 +128,7 @@ void reiserfs_schedule_old_flush(struct super_block *s)
 	spin_lock(&sbi->old_work_lock);
 	if (!sbi->work_queued) {
 		delay = msecs_to_jiffies(dirty_writeback_interval * 10);
-		queue_delayed_work(system_long_wq, &sbi->old_work, delay);
+		queue_delayed_work(system_wq, &sbi->old_work, delay);
 		sbi->work_queued = 1;
 	}
 	spin_unlock(&sbi->old_work_lock);
@@ -565,6 +566,11 @@ static void reiserfs_kill_sb(struct super_block *s)
 		REISERFS_SB(s)->xattr_root = NULL;
 		dput(REISERFS_SB(s)->priv_root);
 		REISERFS_SB(s)->priv_root = NULL;
+
+		if (REISERFS_SB(s)->s_jdev && REISERFS_SB(s)->s_jdev != s->s_bdev) {
+			blkdev_put(REISERFS_SB(s)->s_jdev,
+					FMODE_READ|FMODE_WRITE|FMODE_EXCL);
+		}
 	}
 
 	kill_block_super(s);
@@ -573,15 +579,15 @@ static void reiserfs_kill_sb(struct super_block *s)
 #ifdef CONFIG_QUOTA
 static int reiserfs_quota_off(struct super_block *sb, int type);
 
-static void reiserfs_quota_off_umount(struct super_block *s)
+static void reiserfs_quotas_off(struct super_block *s, int type_max)
 {
 	int type;
 
-	for (type = 0; type < REISERFS_MAXQUOTAS; type++)
+	for (type = type_max - 1; type >= 0; type--)
 		reiserfs_quota_off(s, type);
 }
 #else
-static inline void reiserfs_quota_off_umount(struct super_block *s)
+static inline void reiserfs_quotas_off(struct super_block *s, int type_max)
 {
 }
 #endif
@@ -591,7 +597,7 @@ static void reiserfs_put_super(struct super_block *s)
 	struct reiserfs_transaction_handle th;
 	th.t_trans_id = 0;
 
-	reiserfs_quota_off_umount(s);
+	reiserfs_quotas_off(s, REISERFS_MAXQUOTAS);
 
 	reiserfs_write_lock(s);
 
@@ -629,6 +635,7 @@ static void reiserfs_put_super(struct super_block *s)
 	reiserfs_write_unlock(s);
 	mutex_destroy(&REISERFS_SB(s)->lock);
 	destroy_workqueue(REISERFS_SB(s)->commit_wq);
+	timer_shutdown_sync(&REISERFS_SB(s)->old_work.timer);
 	kfree(REISERFS_SB(s)->s_jdev);
 	kfree(s->s_fs_info);
 	s->s_fs_info = NULL;
@@ -644,6 +651,7 @@ static struct inode *reiserfs_alloc_inode(struct super_block *sb)
 		return NULL;
 	atomic_set(&ei->openers, 0);
 	mutex_init(&ei->tailpack);
+	INIT_LIST_HEAD(&ei->i_prealloc_list); // Moved from init_once
 #ifdef CONFIG_QUOTA
 	memset(&ei->i_dquot, 0, sizeof(ei->i_dquot));
 #endif
@@ -656,22 +664,13 @@ static void reiserfs_free_inode(struct inode *inode)
 	kmem_cache_free(reiserfs_inode_cachep, REISERFS_I(inode));
 }
 
-static void init_once(void *foo)
-{
-	struct reiserfs_inode_info *ei = (struct reiserfs_inode_info *)foo;
-
-	INIT_LIST_HEAD(&ei->i_prealloc_list);
-	inode_init_once(&ei->vfs_inode);
-}
+// init_once is no longer needed as initializations move to reiserfs_alloc_inode
+// and KMEM_CACHE handles inode_init_once implicitly.
 
 static int __init init_inodecache(void)
 {
-	reiserfs_inode_cachep = kmem_cache_create("reiser_inode_cache",
-						  sizeof(struct
-							 reiserfs_inode_info),
-						  0, (SLAB_RECLAIM_ACCOUNT|
-						      SLAB_ACCOUNT),
-						  init_once);
+	reiserfs_inode_cachep = KMEM_CACHE(reiserfs_inode_info,
+					   SLAB_RECLAIM_ACCOUNT | SLAB_ACCOUNT);
 	if (reiserfs_inode_cachep == NULL)
 		return -ENOMEM;
 	return 0;
@@ -758,7 +757,7 @@ static int reiserfs_show_options(struct seq_file *seq, struct dentry *root)
 		seq_puts(seq, ",acl");
 
 	if (REISERFS_SB(s)->s_jdev)
-		seq_show_option(seq, "jdev", REISERFS_SB(s)->s_jdev);
+		seq_show_option(seq, "jdev", bdev_name(REISERFS_SB(s)->s_jdev));
 
 	if (journal->j_max_commit_age != journal->j_default_max_commit_age)
 		seq_printf(seq, ",commit=%d", journal->j_max_commit_age);
@@ -860,7 +859,7 @@ static const struct quotactl_ops reiserfs_qctl_operations = {
 #endif
 
 static const struct export_operations reiserfs_export_ops = {
-	.encode_fh = reiserfs_encode_fh,
+	.encode_fh = generic_encode_ino32_fh,
 	.fh_to_dentry = reiserfs_fh_to_dentry,
 	.fh_to_parent = reiserfs_fh_to_parent,
 	.get_parent = reiserfs_get_parent,
@@ -1695,6 +1694,7 @@ static int read_super_block(struct super_block *s, int offset)
 	 * be one full block below that.
 	 */
 	s->s_maxbytes = (512LL << 32) - s->s_blocksize;
+	s->s_fs_flags |= FS_MGTIME | FS_LBS;
 	return 0;
 }
 
@@ -2066,7 +2066,7 @@ static int reiserfs_fill_super(struct super_block *s, void *data, int silent)
 	 */
 	reiserfs_write_lock(s);
 
-	if (root_inode->i_state & I_NEW) {
+	if (inode_state_read_once(root_inode) & I_NEW) {
 		reiserfs_read_locked_inode(root_inode, &args);
 		unlock_new_inode(root_inode);
 	}
@@ -2249,7 +2249,7 @@ static int reiserfs_statfs(struct dentry *dentry, struct kstatfs *buf)
 {
 	struct reiserfs_super_block *rs = SB_DISK_SUPER_BLOCK(dentry->d_sb);
 
-	buf->f_namelen = (REISERFS_MAX_NAME(s->s_blocksize));
+	buf->f_namelen = (REISERFS_MAX_NAME(dentry->d_sb->s_blocksize));
 	buf->f_bfree = sb_free_blocks(rs);
 	buf->f_bavail = buf->f_bfree;
 	buf->f_blocks = sb_block_count(rs) - sb_bmap_nr(rs) - 1;
@@ -2566,7 +2566,7 @@ static ssize_t reiserfs_quota_write(struct super_block *sb, int type,
 		}
 		lock_buffer(bh);
 		memcpy(bh->b_data + offset, data, tocopy);
-		flush_dcache_page(bh->b_page);
+		flush_dcache_folio(bh->b_folio);
 		set_buffer_uptodate(bh);
 		unlock_buffer(bh);
 		reiserfs_write_lock(sb);
@@ -2634,7 +2634,7 @@ struct file_system_type reiserfs_fs_type = {
 	.name = "reiserfs",
 	.mount = get_super_block,
 	.kill_sb = reiserfs_kill_sb,
-	.fs_flags = FS_REQUIRES_DEV,
+	.fs_flags = FS_REQUIRES_DEV | FS_ALLOW_IDMAP,
 };
 MODULE_ALIAS_FS("reiserfs");
 

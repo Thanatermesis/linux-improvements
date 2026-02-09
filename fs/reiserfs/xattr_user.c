@@ -25,7 +25,7 @@ user_set(const struct xattr_handler *handler, struct mnt_idmap *idmap,
 {
 	if (!reiserfs_xattrs_user(inode->i_sb))
 		return -EOPNOTSUPP;
-	return reiserfs_xattr_set(inode,
+	return reiserfs_xattr_set(idmap, inode,
 				  xattr_full_name(handler, name),
 				  buffer, size, flags);
 }

@@ -42,8 +42,7 @@ reiserfs_set_acl(struct mnt_idmap *idmap, struct dentry *dentry,
 	reiserfs_write_unlock(inode->i_sb);
 	if (error == 0) {
 		if (type == ACL_TYPE_ACCESS && acl) {
-			error = posix_acl_update_mode(&nop_mnt_idmap, inode,
-						      &mode, &acl);
+			error = posix_acl_update_mode(idmap, inode, &mode, &acl);
 			if (error)
 				goto unlock;
 			update_mode = 1;
@@ -397,7 +396,7 @@ int reiserfs_cache_default_acl(struct inode *inode)
 /*
  * Called under i_mutex
  */
-int reiserfs_acl_chmod(struct dentry *dentry)
+int reiserfs_acl_chmod(struct mnt_idmap *idmap, struct dentry *dentry, umode_t mode)
 {
 	struct inode *inode = d_inode(dentry);
 
@@ -407,5 +406,5 @@ int reiserfs_acl_chmod(struct dentry *dentry)
 	    !reiserfs_posixacl(inode->i_sb))
 		return 0;
 
-	return posix_acl_chmod(&nop_mnt_idmap, dentry, inode->i_mode);
+	return posix_acl_chmod(idmap, dentry, mode);
 }

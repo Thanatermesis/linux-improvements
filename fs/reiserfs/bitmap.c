@@ -308,12 +308,12 @@ static inline int block_group_used(struct super_block *s, u32 id)
 	 * with a better on-disk layout vs. a short term gain of skipping the
 	 * read and potentially having a bad placement.
 	 */
-	if (info->free_count == UINT_MAX) {
+	if (READ_ONCE(info->free_count) == UINT_MAX) {
 		struct buffer_head *bh = reiserfs_read_bitmap_block(s, bm);
 		brelse(bh);
 	}
 
-	if (info->free_count > ((s->s_blocksize << 3) * 60 / 100)) {
+	if (READ_ONCE(info->free_count) > ((s->s_blocksize << 3) * 60 / 100)) {
 		return 0;
 	}
 	return 1;
@@ -1444,7 +1444,7 @@ struct buffer_head *reiserfs_read_bitmap_block(struct super_block *sb,
 		BUG_ON(!buffer_uptodate(bh));
 		BUG_ON(atomic_read(&bh->b_count) == 0);
 
-		if (info->free_count == UINT_MAX)
+		if (READ_ONCE(info->free_count) == UINT_MAX)
 			reiserfs_cache_bitmap_metadata(sb, bh, info);
 	}
 

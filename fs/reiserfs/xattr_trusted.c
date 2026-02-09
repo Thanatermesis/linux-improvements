@@ -28,7 +28,8 @@ trusted_set(const struct xattr_handler *handler,
 	if (!capable(CAP_SYS_ADMIN) || IS_PRIVATE(inode))
 		return -EPERM;
 
-	return reiserfs_xattr_set(inode,
+	return reiserfs_xattr_set(idmap,
+				  inode,
 				  xattr_full_name(handler, name),
 				  buffer, size, flags);
 }

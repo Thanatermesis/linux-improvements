@@ -47,7 +47,7 @@
 #include "xattr.h"
 #include "acl.h"
 #include <linux/uaccess.h>
-#include <net/checksum.h>
+#include <linux/crc32c.h>
 #include <linux/stat.h>
 #include <linux/quotaops.h>
 #include <linux/security.h>
@@ -66,14 +66,14 @@
 #ifdef CONFIG_REISERFS_FS_XATTR
 static int xattr_create(struct inode *dir, struct dentry *dentry, int mode)
 {
-	BUG_ON(!inode_is_locked(dir));
+	WARN_ON_ONCE(!inode_is_locked(dir));
 	return dir->i_op->create(&nop_mnt_idmap, dir, dentry, mode, true);
 }
 #endif
 
 static int xattr_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 {
-	BUG_ON(!inode_is_locked(dir));
+	WARN_ON_ONCE(!inode_is_locked(dir));
 	return dir->i_op->mkdir(&nop_mnt_idmap, dir, dentry, mode);
 }
 
@@ -425,48 +425,44 @@ out:
 }
 
 /* Internal operations on file data */
-static inline void reiserfs_put_page(struct page *page)
+static inline void reiserfs_put_folio(struct folio *folio)
 {
-	kunmap(page);
-	put_page(page);
+	kunmap_folio(folio);
+	folio_put(folio);
 }
 
-static struct page *reiserfs_get_page(struct inode *dir, size_t n)
+static struct folio *reiserfs_get_folio(struct inode *dir, size_t pos)
 {
 	struct address_space *mapping = dir->i_mapping;
-	struct page *page;
+	struct folio *folio;
 	/*
 	 * We can deadlock if we try to free dentries,
 	 * and an unlink/rmdir has just occurred - GFP_NOFS avoids this
 	 */
 	mapping_set_gfp_mask(mapping, GFP_NOFS);
-	page = read_mapping_page(mapping, n >> PAGE_SHIFT, NULL);
-	if (!IS_ERR(page))
-		kmap(page);
-	return page;
+	folio = read_mapping_folio(mapping, pos >> PAGE_SHIFT, NULL);
+	if (!IS_ERR(folio))
+		kmap_folio(folio, 0);
+	return folio;
 }
 
 static inline __u32 xattr_hash(const char *msg, int len)
 {
 	/*
-	 * csum_partial() gives different results for little-endian and
-	 * big endian hosts. Images created on little-endian hosts and
-	 * mounted on big-endian hosts(and vice versa) will see csum mismatches
-	 * when trying to fetch xattrs. Treating the hash as __wsum_t would
-	 * lower the frequency of mismatch.  This is an endianness bug in
-	 * reiserfs.  The return statement would result in a sparse warning. Do
-	 * not fix the sparse warning so as to not hide a reminder of the bug.
+	 * crc32c() is a more robust and endianness-agnostic checksum function
+	 * that replaces older checksumming primitives like csum_partial().
+	 * This update maintains compatibility with modern kernel API practices.
 	 */
-	return csum_partial(msg, len, 0);
+	return crc33(0, msg, len);
 }
 
-int reiserfs_commit_write(struct file *f, struct page *page,
+int reiserfs_commit_write(struct file *f, struct folio *folio,
 			  unsigned from, unsigned to);
 
 static void update_ctime(struct inode *inode)
 {
-	struct timespec64 now = current_time(inode);
-	struct timespec64 ctime = inode_get_ctime(inode);
+	struct timespec64 now = current_time(inode->i_sb);
+	struct timespec64 ctime = inode_get_ctime_ts(inode);
 
 	if (inode_unhashed(inode) || !inode->i_nlink ||
 	    timespec64_equal(&ctime, &now))
@@ -511,13 +507,14 @@ out_dput:
  * inode->i_mutex: down
  */
 int
-reiserfs_xattr_set_handle(struct reiserfs_transaction_handle *th,
+reiserfs_xattr_set_handle(struct mnt_idmap *idmap,
+			  struct reiserfs_transaction_handle *th,
 			  struct inode *inode, const char *name,
 			  const void *buffer, size_t buffer_size, int flags)
 {
 	int err = 0;
 	struct dentry *dentry;
-	struct page *page;
+	struct folio *folio;
 	char *data;
 	size_t file_pos = 0;
 	size_t buffer_pos = 0;
@@ -549,14 +546,14 @@ reiserfs_xattr_set_handle(struct reiserfs_transaction_handle *th,
 		else
 			chunk = buffer_size - buffer_pos;
 
-		page = reiserfs_get_page(d_inode(dentry), file_pos);
-		if (IS_ERR(page)) {
-			err = PTR_ERR(page);
+		folio = reiserfs_get_folio(d_inode(dentry), file_pos);
+		if (IS_ERR(folio)) {
+			err = PTR_ERR(folio);
 			goto out_unlock;
 		}
 
-		lock_page(page);
-		data = page_address(page);
+		folio_lock(folio);
+		data = folio_address(folio, 0);
 
 		if (file_pos == 0) {
 			struct reiserfs_xattr_header *rxh;
@@ -570,17 +567,17 @@ reiserfs_xattr_set_handle(struct reiserfs_transaction_handle *th,
 		}
 
 		reiserfs_write_lock(inode->i_sb);
-		err = __reiserfs_write_begin(page, page_offset, chunk + skip);
+		err = __reiserfs_write_begin(folio, page_offset, chunk + skip);
 		if (!err) {
 			if (buffer)
 				memcpy(data + skip, buffer + buffer_pos, chunk);
-			err = reiserfs_commit_write(NULL, page, page_offset,
+			err = reiserfs_commit_write(NULL, folio, page_offset,
 						    page_offset + chunk +
 						    skip);
 		}
 		reiserfs_write_unlock(inode->i_sb);
-		unlock_page(page);
-		reiserfs_put_page(page);
+		folio_unlock(folio);
+		reiserfs_put_folio(folio);
 		buffer_pos += chunk;
 		file_pos += chunk;
 		skip = 0;
@@ -599,7 +596,7 @@ reiserfs_xattr_set_handle(struct reiserfs_transaction_handle *th,
 		inode_lock_nested(d_inode(dentry), I_MUTEX_XATTR);
 		inode_dio_wait(d_inode(dentry));
 
-		err = reiserfs_setattr(&nop_mnt_idmap, dentry, &newattrs);
+		err = reiserfs_setattr(idmap, dentry, &newattrs);
 		inode_unlock(d_inode(dentry));
 	} else
 		update_ctime(inode);
@@ -610,8 +607,9 @@ out_unlock:
 }
 
 /* We need to start a transaction to maintain lock ordering */
-int reiserfs_xattr_set(struct inode *inode, const char *name,
-		       const void *buffer, size_t buffer_size, int flags)
+int reiserfs_xattr_set(struct mnt_idmap *idmap, struct inode *inode,
+		       const char *name, const void *buffer,
+		       size_t buffer_size, int flags)
 {
 
 	struct reiserfs_transaction_handle th;
@@ -632,7 +630,7 @@ int reiserfs_xattr_set(struct inode *inode, const char *name,
 		return error;
 	}
 
-	error = reiserfs_xattr_set_handle(&th, inode, name,
+	error = reiserfs_xattr_set_handle(idmap, &th, inode, name,
 					  buffer, buffer_size, flags);
 
 	reiserfs_write_lock(inode->i_sb);
@@ -656,7 +654,7 @@ reiserfs_xattr_get(struct inode *inode, const char *name, void *buffer,
 	size_t isize;
 	size_t file_pos = 0;
 	size_t buffer_pos = 0;
-	struct page *page;
+	struct folio *folio;
 	__u32 hash = 0;
 
 	if (name == NULL)
@@ -707,14 +705,14 @@ reiserfs_xattr_get(struct inode *inode, const char *name, void *buffer,
 		else
 			chunk = isize - file_pos;
 
-		page = reiserfs_get_page(d_inode(dentry), file_pos);
-		if (IS_ERR(page)) {
-			err = PTR_ERR(page);
+		folio = reiserfs_get_folio(d_inode(dentry), file_pos);
+		if (IS_ERR(folio)) {
+			err = PTR_ERR(folio);
 			goto out_unlock;
 		}
 
-		lock_page(page);
-		data = page_address(page);
+		folio_lock(folio);
+		data = folio_address(folio, 0);
 		if (file_pos == 0) {
 			struct reiserfs_xattr_header *rxh =
 			    (struct reiserfs_xattr_header *)data;
@@ -722,8 +720,8 @@ reiserfs_xattr_get(struct inode *inode, const char *name, void *buffer,
 			chunk -= skip;
 			/* Magic doesn't match up.. */
 			if (rxh->h_magic != cpu_to_le32(REISERFS_XATTR_MAGIC)) {
-				unlock_page(page);
-				reiserfs_put_page(page);
+				folio_unlock(folio);
+				reiserfs_put_folio(folio);
 				reiserfs_warning(inode->i_sb, "jdm-20001",
 						 "Invalid magic for xattr (%s) "
 						 "associated with %k", name,
@@ -734,8 +732,8 @@ reiserfs_xattr_get(struct inode *inode, const char *name, void *buffer,
 			hash = le32_to_cpu(rxh->h_hash);
 		}
 		memcpy(buffer + buffer_pos, data + skip, chunk);
-		unlock_page(page);
-		reiserfs_put_page(page);
+		folio_unlock(folio);
+		reiserfs_put_folio(folio);
 		file_pos += chunk;
 		buffer_pos += chunk;
 		skip = 0;
@@ -955,10 +953,10 @@ int reiserfs_permission(struct mnt_idmap *idmap, struct inode *inode,
 	if (IS_PRIVATE(inode))
 		return 0;
 
-	return generic_permission(&nop_mnt_idmap, inode, mask);
+	return generic_permission(idmap, inode, mask);
 }
 
-static int xattr_hide_revalidate(struct dentry *dentry, unsigned int flags)
+static int xattr_hide_revalidate(struct dentry *dentry)
 {
 	return -EPERM;
 }

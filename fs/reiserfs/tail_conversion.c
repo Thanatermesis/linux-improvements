@@ -130,8 +130,8 @@ int direct2indirect(struct reiserfs_transaction_handle *th, struct inode *inode,
 		 * Special case: unbh->b_page will be NULL if we are coming
 		 * through DIRECT_IO handler here.
 		 */
-		if (!unbh->b_page || buffer_uptodate(unbh)
-		    || PageUptodate(unbh->b_page)) {
+		if (!unbh->b_folio || buffer_uptodate(unbh)
+		    || folio_test_uptodate(unbh->b_folio)) {
 			up_to_date_bh = NULL;
 		} else {
 			up_to_date_bh = unbh;
@@ -147,15 +147,15 @@ int direct2indirect(struct reiserfs_transaction_handle *th, struct inode *inode,
 
 	}
 	/*
-	 * if we've copied bytes from disk into the page, we need to zero
+	 * if we've copied bytes from disk into the folio, we need to zero
 	 * out the unused part of the block (it was not up to date before)
 	 */
 	if (up_to_date_bh) {
 		unsigned pgoff =
 		    (tail_offset + total_tail - 1) & (PAGE_SIZE - 1);
-		char *kaddr = kmap_atomic(up_to_date_bh->b_page);
+		char *kaddr = kmap_local_folio(up_to_date_bh->b_folio, 0);
 		memset(kaddr + pgoff, 0, blk_size - total_tail);
-		kunmap_atomic(kaddr);
+		kunmap_local(kaddr);
 	}
 
 	REISERFS_I(inode)->i_first_direct_byte = U32_MAX;
@@ -176,7 +176,7 @@ void reiserfs_unmap_buffer(struct buffer_head *bh)
 	 * interested in removing it from per-sb j_dirty_buffers list, to avoid
 	 * BUG() on attempt to write not mapped buffer
 	 */
-	if ((!list_empty(&bh->b_assoc_buffers) || bh->b_private) && bh->b_page) {
+	if ((!list_empty(&bh->b_assoc_buffers) || bh->b_private) && bh->b_folio) {
 		struct inode *inode = bh->b_folio->mapping->host;
 		struct reiserfs_journal *j = SB_JOURNAL(inode->i_sb);
 		spin_lock(&j->j_dirty_buffers_lock);
@@ -200,7 +200,7 @@ void reiserfs_unmap_buffer(struct buffer_head *bh)
  * inode
  */
 int indirect2direct(struct reiserfs_transaction_handle *th,
-		    struct inode *inode, struct page *page,
+		    struct inode *inode, struct folio *folio,
 		    struct treepath *path,	/* path to the indirect item. */
 		    const struct cpu_key *item_key,	/* Key to look for
 							 * unformatted node
@@ -242,7 +242,7 @@ int indirect2direct(struct reiserfs_transaction_handle *th,
 	 * we are in truncate or packing tail in file_release
 	 */
 
-	tail = (char *)kmap(page);	/* this can schedule */
+	tail = (char *)kmap_local_folio(folio, 0);	/* this can schedule */
 
 	if (path_changed(&s_ih, path)) {
 		/* re-search indirect item */
@@ -268,8 +268,8 @@ int indirect2direct(struct reiserfs_transaction_handle *th,
 			  0xffff /*ih_free_space */ );
 
 	/*
-	 * we want a pointer to the first byte of the tail in the page.
-	 * the page was locked and this part of the page was up to date when
+	 * we want a pointer to the first byte of the tail in the folio.
+	 * the folio was locked and this part of the folio was up to date when
 	 * indirect2direct was called, so we know the bytes are still valid
 	 */
 	tail = tail + (pos & (PAGE_SIZE - 1));
@@ -290,10 +290,10 @@ int indirect2direct(struct reiserfs_transaction_handle *th,
 		 * unformatted node. For now i_size is considered as guard for
 		 * going out of file size
 		 */
-		kunmap(page);
+		kunmap_local(tail);
 		return block_size - round_tail_len;
 	}
-	kunmap(page);
+	kunmap_local(tail);
 
 	/* make sure to get the i_blocks changes from reiserfs_insert_item */
 	reiserfs_update_sd(th, inode);

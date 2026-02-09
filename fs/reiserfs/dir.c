@@ -34,7 +34,7 @@ static int reiserfs_dir_fsync(struct file *filp, loff_t start, loff_t end,
 	struct inode *inode = filp->f_mapping->host;
 	int err;
 
-	err = file_write_and_wait_range(filp, start, end);
+	err = file_fdatawrite_range(filp, start, end);
 	if (err)
 		return err;
 
@@ -45,7 +45,8 @@ static int reiserfs_dir_fsync(struct file *filp, loff_t start, loff_t end,
 	inode_unlock(inode);
 	if (err < 0)
 		return err;
-	return 0;
+	/* generic_buffers_fsync_noflush returns 0 on success */
+	return generic_buffers_fsync_noflush(filp, start, end, datasync);
 }
 
 #define store_ih(where,what) copy_item_head (where, what)

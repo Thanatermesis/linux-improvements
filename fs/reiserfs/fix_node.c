@@ -887,11 +887,11 @@ static int get_empty_nodes(struct tree_balance *tb, int h)
 		RFALSE(!*blocknr,
 		       "PAP-8135: reiserfs_new_blocknrs failed when got new blocks");
 
-		new_bh = sb_getblk(sb, *blocknr);
-		RFALSE(buffer_dirty(new_bh) ||
+		new_bh = getblk_unmovable(sb->s_bdev, *blocknr, sb->s_blocksize);
+		RFALSE(!new_bh || buffer_dirty(new_bh) ||
 		       buffer_journaled(new_bh) ||
 		       buffer_journal_dirty(new_bh),
-		       "PAP-8140: journaled or dirty buffer %b for the new block",
+		       "PAP-8140: journaled or dirty buffer %b for the new block or getblk_unmovable failed",
 		       new_bh);
 
 		/* Put empty buffers into the array. */
@@ -2274,7 +2274,7 @@ static int get_mem_for_virtual_node(struct tree_balance *tb)
 	if (size > tb->vn_buf_size) {
 		if (tb->vn_buf) {
 			/* free memory allocated before */
-			kfree(tb->vn_buf);
+			kvfree(tb->vn_buf);
 			/* this is not needed if kfree is atomic */
 			check_fs = 1;
 		}
@@ -2283,7 +2283,7 @@ static int get_mem_for_virtual_node(struct tree_balance *tb)
 		tb->vn_buf_size = size;
 
 		/* get memory for virtual item */
-		buf = kmalloc(size, GFP_ATOMIC | __GFP_NOWARN);
+		buf = kvmalloc(size, GFP_ATOMIC | __GFP_NOWARN);
 		if (!buf) {
 			/*
 			 * getting memory with GFP_KERNEL priority may involve
@@ -2292,7 +2292,7 @@ static int get_mem_for_virtual_node(struct tree_balance *tb)
 			 * resources here
 			 */
 			free_buffers_in_tb(tb);
-			buf = kmalloc(size, GFP_NOFS);
+			buf = kvmalloc(size, GFP_NOFS);
 			if (!buf) {
 				tb->vn_buf_size = 0;
 			}
@@ -2817,6 +2817,6 @@ void unfix_nodes(struct tree_balance *tb)
 		}
 	}
 
-	kfree(tb->vn_buf);
+	kvfree(tb->vn_buf);
 
 }

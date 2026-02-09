@@ -1331,7 +1331,7 @@ int reiserfs_delete_item(struct reiserfs_transaction_handle *th,
 
 	if (un_bh) {
 		int off;
-		char *data;
+		void *data;
 
 		/*
 		 * We are in direct2indirect conversion, so move tail contents
@@ -1351,18 +1351,18 @@ int reiserfs_delete_item(struct reiserfs_transaction_handle *th,
 		 * The unformatted node must be dirtied later on.  We can't be
 		 * sure here if the entire tail has been deleted yet.
 		 *
-		 * un_bh is from the page cache (all unformatted nodes are
-		 * from the page cache) and might be a highmem page.  So, we
+		 * un_bh is from the folio cache (all unformatted nodes are
+		 * from the folio cache) and might be a highmem folio.  So, we
 		 * can't use un_bh->b_data.
 		 * -clm
 		 */
 
-		data = kmap_atomic(un_bh->b_page);
-		off = ((le_ih_k_offset(&s_ih) - 1) & (PAGE_SIZE - 1));
+		data = kmap_local_folio(un_bh->b_folio, 0);
+		off = ((le_ih_k_offset(&s_ih) - 1) & (folio_size(un_bh->b_folio) - 1));
 		memcpy(data + off,
 		       ih_item_body(PATH_PLAST_BUFFER(path), &s_ih),
 		       ret_value);
-		kunmap_atomic(data);
+		kunmap_local(data);
 	}
 
 	/* Perform balancing after all resources have been collected at once. */
@@ -1374,7 +1374,7 @@ int reiserfs_delete_item(struct reiserfs_transaction_handle *th,
 		       quota_cut_bytes, inode->i_uid, head2type(&s_ih));
 #endif
 	depth = reiserfs_write_unlock_nested(inode->i_sb);
-	dquot_free_space_nodirty(inode, quota_cut_bytes);
+	dquot_free_space(inode, quota_cut_bytes);
 	reiserfs_write_lock_nested(inode->i_sb, depth);
 
 	/* Return deleted body length */
@@ -1471,7 +1471,7 @@ void reiserfs_delete_solid_item(struct reiserfs_transaction_handle *th,
 					       key2type(key));
 #endif
 				depth = reiserfs_write_unlock_nested(sb);
-				dquot_free_space_nodirty(inode,
+				dquot_free_space(inode,
 							 quota_cut_bytes);
 				reiserfs_write_lock_nested(sb, depth);
 			}
@@ -1517,7 +1517,7 @@ int reiserfs_delete_object(struct reiserfs_transaction_handle *th,
 	return err;
 }
 
-static void unmap_buffers(struct page *page, loff_t pos)
+static void unmap_buffers(struct folio *folio, loff_t pos)
 {
 	struct buffer_head *bh;
 	struct buffer_head *head;
@@ -1525,11 +1525,11 @@ static void unmap_buffers(struct page *page, loff_t pos)
 	unsigned long tail_index;
 	unsigned long cur_index;
 
-	if (page) {
-		if (page_has_buffers(page)) {
-			tail_index = pos & (PAGE_SIZE - 1);
+	if (folio) {
+		if (folio_buffers(folio)) {
+			tail_index = offset_in_folio(folio, pos);
 			cur_index = 0;
-			head = page_buffers(page);
+			head = folio_buffers(folio);
 			bh = head;
 			do {
 				next = bh->b_this_page;
@@ -1554,7 +1554,7 @@ static void unmap_buffers(struct page *page, loff_t pos)
 
 static int maybe_indirect_to_direct(struct reiserfs_transaction_handle *th,
 				    struct inode *inode,
-				    struct page *page,
+				    struct folio *folio,
 				    struct treepath *path,
 				    const struct cpu_key *item_key,
 				    loff_t new_file_size, char *mode)
@@ -1563,16 +1563,16 @@ static int maybe_indirect_to_direct(struct reiserfs_transaction_handle *th,
 	int block_size = sb->s_blocksize;
 	int cut_bytes;
 	BUG_ON(!th->t_trans_id);
-	BUG_ON(new_file_size != inode->i_size);
+	BUG_ON(new_file_size != i_size_read(inode));
 
 	/*
-	 * the page being sent in could be NULL if there was an i/o error
+	 * the folio being sent in could be NULL if there was an i/o error
 	 * reading in the last block.  The user will hit problems trying to
 	 * read the file, but for now we just skip the indirect2direct
 	 */
-	if (atomic_read(&inode->i_count) > 1 ||
+	if (icount_read(inode) > 1 ||
 	    !tail_has_to_be_packed(inode) ||
-	    !page || (REISERFS_I(inode)->i_flags & i_nopack_mask)) {
+	    !folio || (REISERFS_I(inode)->i_flags & i_nopack_mask)) {
 		/* leave tail in an unformatted node */
 		*mode = M_SKIP_BALANCING;
 		cut_bytes =
@@ -1582,7 +1582,7 @@ static int maybe_indirect_to_direct(struct reiserfs_transaction_handle *th,
 	}
 
 	/* Perform the conversion to a direct_item. */
-	return indirect2direct(th, inode, page, path, item_key,
+	return indirect2direct(th, inode, folio, path, item_key,
 			       new_file_size, mode);
 }
 
@@ -1600,7 +1600,7 @@ static void indirect_to_direct_roll_back(struct reiserfs_transaction_handle *th,
 	int removed;
 	BUG_ON(!th->t_trans_id);
 
-	make_cpu_key(&tail_key, inode, inode->i_size + 1, TYPE_DIRECT, 4);
+	make_cpu_key(&tail_key, inode, i_size_read(inode) + 1, TYPE_DIRECT, 4);
 	tail_key.key_length = 4;
 
 	tail_len =
@@ -1638,7 +1638,7 @@ int reiserfs_cut_from_item(struct reiserfs_transaction_handle *th,
 			   struct treepath *path,
 			   struct cpu_key *item_key,
 			   struct inode *inode,
-			   struct page *page, loff_t new_file_size)
+			   struct folio *folio, loff_t new_file_size)
 {
 	struct super_block *sb = inode->i_sb;
 	/*
@@ -1689,7 +1689,7 @@ int reiserfs_cut_from_item(struct reiserfs_transaction_handle *th,
 			       "PAP-5570: can not convert twice");
 
 			ret_value =
-			    maybe_indirect_to_direct(th, inode, page,
+			    maybe_indirect_to_direct(th, inode, folio,
 						     path, item_key,
 						     new_file_size, &mode);
 			if (mode == M_SKIP_BALANCING)
@@ -1841,7 +1841,7 @@ int reiserfs_cut_from_item(struct reiserfs_transaction_handle *th,
 		 * blocks that must be flushed before the transaction
 		 * commits, make sure to unmap and invalidate it
 		 */
-		unmap_buffers(page, tail_pos);
+		unmap_buffers(folio, (size_t)tail_pos);
 		REISERFS_I(inode)->i_flags &= ~i_pack_on_close_mask;
 	}
 #ifdef REISERQUOTA_DEBUG
@@ -1850,7 +1850,7 @@ int reiserfs_cut_from_item(struct reiserfs_transaction_handle *th,
 		       quota_cut_bytes, inode->i_uid, '?');
 #endif
 	depth = reiserfs_write_unlock_nested(sb);
-	dquot_free_space_nodirty(inode, quota_cut_bytes);
+	dquot_free_space(inode, quota_cut_bytes);
 	reiserfs_write_lock_nested(sb, depth);
 	return ret_value;
 }
@@ -1876,7 +1876,7 @@ static void truncate_directory(struct reiserfs_transaction_handle *th,
  */
 int reiserfs_do_truncate(struct reiserfs_transaction_handle *th,
 			 struct inode *inode,	/* ->i_size contains new size */
-			 struct page *page,	/* up to date for last block */
+			 struct folio *folio,	/* up to date for last block */
 			 /*
 			  * when it is called by file_release to convert
 			  * the tail - no timestamps should be updated
@@ -1969,7 +1969,7 @@ int reiserfs_do_truncate(struct reiserfs_transaction_handle *th,
 		/* Cut or delete file item. */
 		deleted =
 		    reiserfs_cut_from_item(th, &s_search_path, &s_item_key,
-					   inode, page, new_file_size);
+					   inode, folio, new_file_size);
 		if (deleted < 0) {
 			reiserfs_warning(inode->i_sb, "vs-5665",
 					 "reiserfs_cut_from_item failed");
@@ -2003,8 +2003,7 @@ int reiserfs_do_truncate(struct reiserfs_transaction_handle *th,
 			pathrelse(&s_search_path);
 
 			if (update_timestamps) {
-				inode_set_mtime_to_ts(inode,
-						      current_time(inode));
+				inode_set_mtime_to_ts(inode, inode_get_ctime(inode));
 				inode_set_ctime_current(inode);
 			}
 			reiserfs_update_sd(th, inode);
@@ -2029,7 +2028,7 @@ int reiserfs_do_truncate(struct reiserfs_transaction_handle *th,
 update_and_out:
 	if (update_timestamps) {
 		/* this is truncate, not file closing */
-		inode_set_mtime_to_ts(inode, current_time(inode));
+		inode_set_mtime_to_ts(inode, inode_get_ctime(inode));
 		inode_set_ctime_current(inode);
 	}
 	reiserfs_update_sd(th, inode);
